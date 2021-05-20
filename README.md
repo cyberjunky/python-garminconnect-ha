@@ -18,7 +18,7 @@ pip install garminconnect-ha
 ```python
 #!/usr/bin/env python3
 
-from garminconnect import (
+from garminconnect_ha import (
     Garmin,
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError,
@@ -73,26 +73,6 @@ except (
 except Exception:  # pylint: disable=broad-except
     print("Unknown error occurred during Garmin Connect Client login")
     quit()
-
-
-"""
-Get email address from users profile
-"""
-print("client.get_email_address()")
-print("----------------------------------------------------------------------------------------")
-try:
-    print(client.get_full_name())
-except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client get email_address: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client get email_address")
-    quit()
-
 
 
 """
@@ -154,3 +134,4 @@ except (
 except Exception:  # pylint: disable=broad-except
     print("Unknown error occurred during Garmin Connect Client get device settings")
     quit()
+

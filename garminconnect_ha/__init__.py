@@ -5,8 +5,6 @@ import re
 
 import requests
 
-logger = logging.getLogger(__name__)
-
 URL_HOSTNAME = "https://connect.garmin.com/modern/auth/hostname"
 URL_LOGIN = "https://sso.garmin.com/sso/login"
 URL_POST_LOGIN = "https://connect.garmin.com/modern/"
@@ -32,9 +30,10 @@ class Garmin:
         self._session = None
         self._email = email
         self._password = password
-        self._common_headers = {"NK": "NT"}
+
+        self._username = None
         self._display_name = None
-        self._email_address = None
+        self._logger = logging.getLogger(__name__)
 
     def login(self):
         """Return a requests session, loaded with precious cookies."""
@@ -49,11 +48,16 @@ class Garmin:
 
         # Request sso hostname
         sso_hostname = None
-        response = session.get(URL_HOSTNAME)
-        if not response.ok:
-            raise Exception(
-                "Invalid SSO first request status code {}".format(response.status_code)
-            )
+        try:
+            response = session.get(URL_HOSTNAME)
+            response.raise_for_status()
+
+        except requests.exceptions.HTTPError as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError("Too many requests #1") from err
+
+            raise GarminConnectConnectionError("Error connecting #1") from err
+
         sso_hostname = response.json().get("host")
 
         # Load login page to get login ticket
@@ -95,9 +99,15 @@ class Garmin:
             ("rememberMyBrowserShown", "false"),
             ("rememberMyBrowserChecked", "false"),
         ]
-        response = session.get(URL_LOGIN, params=params)
-        if response.status_code != 200:
-            raise Exception("No login form")
+        try:
+            response = session.get(URL_LOGIN, params=params)
+            response.raise_for_status()
+
+        except requests.exceptions.HTTPError as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError("Too many requests #2") from err
+
+            raise GarminConnectConnectionError("Error connecting #2 status %s", response.status_code) from err
 
         # Lookup for csrf token
         csrf = re.search(
@@ -107,7 +117,7 @@ class Garmin:
         if csrf is None:
             raise Exception("No CSRF token")
         csrf_token = csrf.group(1)
-        logger.debug("Found CSRF token %s", csrf_token)
+        self._logger.debug("Found CSRF token %s", csrf_token)
 
         # Login/password with login ticket
         data = {
@@ -132,85 +142,87 @@ class Garmin:
             "Sec-Fetch-User": "?1",
             "TE": "Trailers",
         }
+        try:
+            response = session.post(
+                URL_LOGIN, params=params, data=data, headers=headers
+            )
+            response.raise_for_status()
 
-        response = session.post(URL_LOGIN, params=params, data=data, headers=headers)
-
-        # Too many requests made, blocked for 1 hour
-        if not response.ok:
+        except requests.exceptions.HTTPError as err:
             if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests")
-            raise GarminConnectConnectionError("Authentication error")
+                raise GarminConnectTooManyRequestsError("Too many requests #3") from err
+
+            raise GarminConnectConnectionError("Error connecting #3 status %s ", response.status_code) from err
 
         # Check we have sso guid in cookies
         if "GARMIN-SSO-GUID" not in session.cookies:
-            raise GarminConnectAuthenticationError("Authentication error")
+            raise GarminConnectAuthenticationError("Authentication error #4")
 
         # Needs a service ticket from previous response
         headers = {
             "Host": "connect.garmin.com",
         }
-        response = session.get(URL_POST_LOGIN, params=params, headers=headers)
-        if response.status_code != 200 and not response.history:
-            raise GarminConnectAuthenticationError("Authentication error")
+
+        try:
+            response = session.get(URL_POST_LOGIN, params=params, headers=headers)
+            response.raise_for_status()
+
+        except requests.exceptions.HTTPError as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError("Too many requests #5") from err
+
+            if not response.history:
+                raise GarminConnectConnectionError("Error connecting #5 status %s ", response.status_code) from err
 
         # Check login
-        response = session.get(URL_USER_PROFILE)
-        if not response.ok:
-            raise Exception("Login check failed.")
+        try:
+            response = session.get(URL_USER_PROFILE)
+            response.raise_for_status()
 
-        garmin_user = response.json()
+        except requests.exceptions.HTTPError as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError("Too many requests #6") from err
+
+            raise GarminConnectConnectionError("Error connecting #6 status %s ", response.status_code) from err
 
         self._session = session
-        self._email_address = garmin_user["username"]
-        self._display_name = garmin_user["displayName"]
+        self._display_name = response.json().get("displayName")
+        self._username = response.json().get("username")
+        self._logger.debug("Logged in with %s", self._username)
 
-        logger.debug("Logged in with %s", self._email_address)
-
-        return garmin_user
+        return self._username
 
     def _fetch_data(self, url):
         """Fetch and return received data."""
 
-        logger.debug("Fetching data with URL: %s", url)
+        self._logger.debug("Fetching data with URL: %s", url)
 
         try:
-            response = self._session.get(url, headers=self._common_headers)
-            logger.debug("Fetch response code %s", response.status_code)
+            response = self._session.get(url, headers={"NK": "NT"})
+            self._logger.debug("Fetch response code %s", response.status_code)
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests") from err
+                raise GarminConnectTooManyRequestsError("Too many requests #7") from err
 
-            logger.debug(
-                "Exception occurred possibly session expired, retry to login: %s", err
-            )
             self.login()
 
             try:
-                response = self._session.get(url, headers=self._common_headers)
-                logger.debug("Fetch response code %s", response.status_code)
+                response = self._session.get(url, headers={"NK": "NT"})
+                self._logger.debug("Fetch response code %s", response.status_code)
                 response.raise_for_status()
             except requests.exceptions.HTTPError as err:
-                logger.debug(
-                    "Exception occurred during data retrieval, relogin without effect: %s",
-                    err,
-                )
                 if response.status_code == 429:
                     raise GarminConnectTooManyRequestsError(
-                        "Too many requests"
+                        "Too many requests #8"
                     ) from err
 
-                raise GarminConnectConnectionError("Error connecting") from err
+                raise GarminConnectConnectionError("Error connecting #8 status " + response.status_code) from err
 
         response_json = response.json()
-        logger.debug("Fetch response json %s", response_json)
+        self._logger.debug("Fetch response json %s", response_json)
 
         return response_json
-
-    def get_email_address(self):
-        """Return email address."""
-
-        return self._email_address
 
     def get_devices(self):
         """Return available devices for the current user account."""
@@ -231,30 +243,28 @@ class Garmin:
 
         try:
             response = self._session.get(statisticsurl)
-            if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests")
-
-            logger.debug("User statistics status code: %s", response.status_code)
             response.raise_for_status()
+
         except requests.exceptions.HTTPError as err:
-            raise GarminConnectConnectionError("Error connecting") from err
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError("Too many requests #9") from err
+            raise GarminConnectConnectionError("Error connecting #9 status " + response.status_code) from err
 
         response_json = response.json()
 
         if response_json["privacyProtected"] is True:
-            logger.debug("Session expired - trying relogin")
+            self._logger.debug("Session expired - trying relogin")
             self.login()
+
             try:
                 response = self._session.get(statisticsurl)
-                if response.status_code == 429:
-                    raise GarminConnectTooManyRequestsError("Too many requests")
-
-                logger.debug("User statistics status code %s", response.status_code)
                 response.raise_for_status()
+
             except requests.exceptions.HTTPError as err:
-                logger.debug(
-                    "Exception occurred during, relogin without effect: %s", err
-                )
+                if response.status_code == 429:
+                    raise GarminConnectTooManyRequestsError(
+                        "Too many requests #10"
+                    ) from err
                 raise GarminConnectConnectionError("Error connecting") from err
             else:
                 response_json = response.json()
