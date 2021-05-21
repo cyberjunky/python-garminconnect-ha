@@ -1,9 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-import io
-import os
-import re
-import sys
 
 from setuptools import setup
 
@@ -18,7 +13,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    description="Minimal Garmin Connect Python 3 API wrapper for Home Assistant",
+    description="Garmin Connect Python 3 API wrapper for Home Assistant",
     name="garminconnect_ha",
     keywords=["garmin connect", "api", "client"],
     license="MIT license",
@@ -27,5 +22,5 @@ setup(
     long_description=readme,
     url="https://github.com/cyberjunky/python-garminconnect-ha",
     packages=["garminconnect_ha"],
-    version="0.1.1",
+    version="0.1.2",
 )
