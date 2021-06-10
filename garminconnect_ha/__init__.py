@@ -1,48 +1,110 @@
 """Garmin Connect Python 3 API wrapper for Home Assistant."""
 import logging
 import re
+from typing import Any, Dict
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 URL_BASE = "https://connect.garmin.com/modern/"
 URL_BASE_PROXY = "https://connect.garmin.com/proxy/"
 URL_LOGIN = "https://sso.garmin.com/sso/login"
 
+def _check_response(resp: requests.Response) -> None:
+    """Check the response and throw the appropriate exception if needed."""
+
+    logger.debug("Checking status code: %s", resp.status_code)
+
+    if resp.status_code != 200:
+        try:
+            response = resp.json()
+            error = response["message"]
+        except Exception:
+            error = None
+
+        if resp.status_code == 401:
+            raise GarminConnectAuthenticationError("Authentication error")
+
+        if resp.status_code == 403:
+            raise GarminConnectConnectionError("Connection error")
+
+        if resp.status_code == 429:
+            raise GarminConnectTooManyRequestsError("Too many requests")
+
+        raise ApiException(f"Unknown API response [{resp.status_code}] - {error}")
 
 class Garmin:
     """Garmin Connect's API wrapper."""
 
-    def __init__(self, email, password):
-        """Initialize module."""
-
+    def __init__(self, email: str, password: str):
+        """Garmin Connect's API wrapper."""
         self._session = None
         self._email = email
         self._password = password
         self._username = None
         self._display_name = None
-        self._logger = logging.getLogger(__name__)
 
-    def login(self):
+
+    def _get_data(
+        self, url: str, headers: dict = None, params: dict = None, data: dict = None
+    ) -> Dict[str, Any]:
+        """Get and return requests data, relogin if needed."""
+
+        logger.debug("Fetch data with URL: %s", url)
+
+        try:
+            if data:
+                response = self._session.post(
+                    url, headers=headers, params=params, data=data
+                )
+            else:
+                response = self._session.get(url, headers=headers, params=params)
+
+            _check_response(response)
+        except (
+            GarminConnectConnectionError,
+            GarminConnectAuthenticationError,
+        ):
+            logger.debug("Session expired, trying re-login")
+            self.login()
+
+            if data:
+                response = self._session.post(
+                    url, headers=headers, params=params, data=data
+                )
+            else:
+                response = self._session.get(url, headers=headers, params=params)
+            _check_response(response)
+
+        logger.debug("Response: %s", response.content)
+        return response
+
+    def login(self) -> Dict[str, Any]:
         """Return a requests session, loaded with precious cookies."""
 
-        self._logger.debug("Login started")
+        logger.debug("Login started")
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:48.0) Gecko/20100101 Firefox/50.0"
+            "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64;"
+            " rv:48.0) Gecko/20100101 Firefox/50.0"
         }
 
         # Define a valid user agent
         self._session = requests.Session()
         self._session.headers.update(headers)
 
+        url = URL_BASE + "auth/hostname"
+        logger.debug("Requesting sso hostname with url: %s", url)
+
         # Request sso hostname
         sso_hostname = (
-            self._fetch_data(URL_BASE + "auth/hostname", headers=headers)
+            self._get_data(url, headers=headers)
             .json()
             .get("host")
         )
 
-        self._logger.debug("Login ticket")
+        logger.debug("Requesting login token with url: %s", URL_LOGIN)
 
         # Load login page to get login ticket
         params = [
@@ -84,9 +146,8 @@ class Garmin:
             ("rememberMyBrowserChecked", "false"),
         ]
 
-        response = self._fetch_data(URL_LOGIN, headers=headers, params=params)
+        response = self._get_data(URL_LOGIN, headers=headers, params=params)
 
-        self._logger.debug("CSRF token")
         # Lookup for csrf token
         csrf = re.search(
             r'<input type="hidden" name="_csrf" value="(\w+)" />',
@@ -95,6 +156,9 @@ class Garmin:
         if csrf is None:
             raise Exception("No CSRF token found")
         csrf_token = csrf.group(1)
+
+        logger.debug("Got CSRF token: %s", csrf_token)
+        logger.debug("Referer: %s", response.url)
 
         # Login/password with login ticket
         data = {
@@ -120,8 +184,8 @@ class Garmin:
             "TE": "Trailers",
         }
 
-        self._logger.debug("Login using ticket")
-        response = self._fetch_data(
+        logger.debug("Login using ticket")
+        response = self._get_data(
             URL_LOGIN, headers=headers, params=params, data=data
         )
 
@@ -129,110 +193,56 @@ class Garmin:
         if "GARMIN-SSO-GUID" not in self._session.cookies:
             raise GarminConnectAuthenticationError("Authentication error")
 
-        # Needs a service ticket from previous response
+        # We need a service ticket from previous response
         headers = {
             "Host": "connect.garmin.com",
         }
 
-        self._logger.debug("Service ticket")
+        logger.debug("Service ticket")
 
         try:
             response = self._session.get(url=URL_BASE, params=params, headers=headers)
             response.raise_for_status()
-
         except requests.exceptions.HTTPError as err:
             if response.status_code == 429:
                 raise GarminConnectTooManyRequestsError(
-                    "Too many requests in service ticket"
+                    "Too many requests"
                 ) from err
 
             if not response.history:
-                raise GarminConnectConnectionError(
-                    "Error connecting in service ticket status code %s"
-                    % response.status_code
-                ) from err
+                GarminConnectAuthenticationError("Authentication error")
 
-        self._logger.debug("Get user infomation")
+        logger.debug("Get user information")
 
-        response = self._fetch_data(URL_BASE + "currentuser-service/user/info")
+        response = self._get_data(URL_BASE + "currentuser-service/user/info")
 
         self._display_name = response.json().get("displayName")
         self._username = response.json().get("username")
-        self._logger.debug("Logged in with %s", self._username)
+        logger.debug("Logged in with %s", self._username)
 
         return self._username
 
-    def _fetch_data(self, url, headers=None, params=None, data=None):
-        """Fetch and return received data."""
-
-        self._logger.debug("Fetch data from URL: %s", url)
-
-        try:
-            if data:
-                response = self._session.post(
-                    url, headers=headers, params=params, data=data
-                )
-            else:
-                response = self._session.get(url, headers=headers, params=params)
-            self._logger.debug(
-                "Fetch received status code %s in fetch_data", response.status_code
-            )
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as err:
-            if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError(
-                    "Too many requests in fetch_data"
-                ) from err
-
-            self._logger.debug(
-                "Session expired in fetch_data trying login",
-            )
-            self.login()
-
-            try:
-                if data:
-                    response = self._session.post(
-                        url, headers=headers, params=params, data=data
-                    )
-                else:
-                    response = self._session.get(url, headers=headers, params=params)
-                self._logger.debug(
-                    "Fetch received status code %s in fetch_data relogin",
-                    response.status_code,
-                )
-                response.raise_for_status()
-            except requests.exceptions.HTTPError as err:
-                if response.status_code == 429:
-                    raise GarminConnectTooManyRequestsError(
-                        "Too many requests in fetch_data 2nd"
-                    ) from err
-
-                raise GarminConnectConnectionError(
-                    "Error connecting status %s in fetch_data relogin"
-                    + response.status_code
-                ) from err
-
-        # self._logger.debug("Fetch received reponse: %s", response.text)
-
-        return response
-
-    def get_devices(self):
+    def get_devices(self) -> Dict[str, Any]:
         """Return available devices for the current user account."""
 
-        return self._fetch_data(
-            URL_BASE_PROXY + "device-service/deviceregistration/devices"
-        ).json()
+        url = URL_BASE_PROXY + "device-service/deviceregistration/devices"
+        logger.debug("Requesting devices with url: %s", url)
 
-    def get_device_settings(self, device_id):
+        return self._get_data(url).json()
+
+    def get_device_settings(self, device_id: str) -> Dict[str, Any]:
         """Return device settings for specific device."""
 
-        return self._fetch_data(
+        url = (
             URL_BASE_PROXY
             + "device-service/deviceservice/device-info/settings/"
             + str(device_id)
-        ).json()
+        )
+        logger.debug("Requesting device settings with url: %s", url)
 
-    def get_user_summary(self, cdate):
+        return self._get_data(url).json()
+
+    def get_user_summary(self, cdate: str) -> Dict[str, Any]:
         """Return user activity summary for 'cDate' format 'YYYY-mm-dd'."""
 
         url = (
@@ -244,17 +254,16 @@ class Garmin:
             + cdate
         )
 
-        response_json = self._fetch_data(url).json()
+        logger.debug("Requesting user summary with url: %s", url)
+        response = self._get_data(url).json()
 
-        if response_json["privacyProtected"] is True:
-            self._logger.debug("Session expired - trying relogin")
+        if response["privacyProtected"] is True:
+            logger.debug("Session expired - trying relogin")
             self.login()
 
-            response_json = self._fetch_data(url).json()
+        return self._get_data(url).json()
 
-        return response_json
-
-    def get_body_composition(self, cdate):
+    def get_body_composition(self, cdate: str) -> Dict[str, Any]:
         """Return available body composition data for 'cDate' format 'YYYY-mm-dd'."""
         url = (
             URL_BASE_PROXY
@@ -264,17 +273,33 @@ class Garmin:
             + "&endDate="
             + cdate
         )
+        logger.debug("Requesting body composition with url: %s", url)
 
-        return self._fetch_data(url).json()
+        return self._get_data(url).json()
 
-    def get_device_alarms(self):
+    def get_device_alarms(self) -> Dict[str, Any]:
         """Combine the list of active alarms from all garmin devices."""
+
+        logger.debug("Gathering device alarms")
+
         alarms = []
         devices = self.get_devices()
         for device in devices:
             device_settings = self.get_device_settings(device["deviceId"])
             alarms += device_settings["alarms"]
         return alarms
+
+
+class ApiException(Exception):
+    """Exception for API calls."""
+
+    def __init__(self, msg):
+        super().__init__()
+        self.msg = msg
+
+    def __str__(self):
+        return f"API Error: {self.msg}"
+
 
 class GarminConnectConnectionError(Exception):
     """Raised when communication ended in error."""
