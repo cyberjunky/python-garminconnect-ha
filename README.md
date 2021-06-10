@@ -17,6 +17,9 @@ pip install garminconnect-ha
 
 ```python
 #!/usr/bin/env python3
+"""Example code."""
+from datetime import date
+import logging
 
 from garminconnect_ha import (
     Garmin,
@@ -25,113 +28,46 @@ from garminconnect_ha import (
     GarminConnectAuthenticationError,
 )
 
-from datetime import date
-
-
-"""
-Enable debug logging
-"""
-import logging
+# Configure debug logging
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 today = date.today()
 
-
-"""
-Initialize Garmin Connect client with credentials
-"""
-print("Garmin(email, password)")
-print("----------------------------------------------------------------------------------------")
 try:
+    # Initialize Garmin Connect client with your credentials
     client = Garmin(YOUR_EMAIL, YOUR_PASSWORD)
-except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client init: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client init")
-    quit()
+
+    ## User
+
+    # Login to Garmin Connect portal
+    username = client.login()
+    logger.debug("Username = %s", username)
 
 
-"""
-Login to Garmin Connect portal
-"""
-print("client.login()")
-print("----------------------------------------------------------------------------------------")
-try:
-    client.login()
-except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client login: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client login")
-    quit()
+    # Get users activity summary data for 'YYYY-MM-DD'
+    logger.debug(client.get_user_summary(today.isoformat()))
 
+    # Get users body composition data for 'YYYY-MM-DD'
+    logger.debug(client.get_body_composition(today.isoformat()))
 
-"""
-Get user data
-"""
-print("client.get_user_data(%s)", today.isoformat())
-print("----------------------------------------------------------------------------------------")
-try:
-    print(client.get_user_data(today.isoformat()))
-except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client get user data: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client get user data")
-    quit()
+    ## Devices
 
-
-"""
-Get devices
-"""
-print("client.get_devices()")
-print("----------------------------------------------------------------------------------------")
-try:
+    # Get users devices data
     devices = client.get_devices()
-    print(devices)
-except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client get devices: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client get devices")
-    quit()
+    logger.debug(devices)
 
-
-"""
-Get device settings
-"""
-try:
+    # Get details of users device with deviceId
     for device in devices:
         device_id = device["deviceId"]
-        print("client.get_device_settings(%s)", device_id)
-        print("----------------------------------------------------------------------------------------")
+        logger.debug(client.get_device_settings(device_id))
 
-        print(client.get_device_settings(device_id))
+    # Get alarm data from all devices
+    logger.debug(client.get_device_alarms())
+
 except (
-    GarminConnectConnectionError,
-    GarminConnectAuthenticationError,
-    GarminConnectTooManyRequestsError,
-) as err:
-    print("Error occurred during Garmin Connect Client get device settings: %s" % err)
-    quit()
-except Exception:  # pylint: disable=broad-except
-    print("Unknown error occurred during Garmin Connect Client get device settings")
-    quit()
-
+        GarminConnectConnectionError,
+        GarminConnectAuthenticationError,
+        GarminConnectTooManyRequestsError,
+    ) as err:
+    logger.debug("Error occurred during Garmin Connect communication: %s", err)
