@@ -232,7 +232,7 @@ class Garmin:
             + str(device_id)
         ).json()
 
-    def _get_user_summary(self, cdate):
+    def get_user_summary(self, cdate):
         """Return user activity summary for 'cDate' format 'YYYY-mm-dd'."""
 
         url = (
@@ -254,7 +254,7 @@ class Garmin:
 
         return response_json
 
-    def _get_body_composition(self, cdate):
+    def get_body_composition(self, cdate):
         """Return available body composition data for 'cDate' format 'YYYY-mm-dd'."""
         url = (
             URL_BASE_PROXY
@@ -267,13 +267,14 @@ class Garmin:
 
         return self._fetch_data(url).json()
 
-    def get_user_data(self, cdate):
-        """Return user activity and body composition data for 'cDate' format 'YYYY-mm-dd'."""
-        return {
-            **self._get_user_summary(cdate),
-            **self._get_body_composition(cdate)["totalAverage"],
-        }
-
+    def get_device_alarms(self):
+        """Combine the list of active alarms from all garmin devices."""
+        alarms = []
+        devices = self.get_devices()
+        for device in devices:
+            device_settings = self.get_device_settings(device["deviceId"])
+            alarms += device_settings["alarms"]
+        return alarms
 
 class GarminConnectConnectionError(Exception):
     """Raised when communication ended in error."""
