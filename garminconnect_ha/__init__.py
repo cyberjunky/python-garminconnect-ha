@@ -277,6 +277,17 @@ class Garmin:
 
         return self._get_data(url).json()
 
+    def get_max_metrics(self, cdate: str) -> Dict[str, Any]:
+        """Return available max metric data for 'cDate' format 'YYYY-mm-dd'."""
+        url = (
+            URL_BASE_PROXY
+            + "metrics-service/metrics/maxmet/latest/"
+            + cdate
+        )
+        logger.debug("Requesting max metrics with url: %s", url)
+
+        return self._get_data(url).json()
+
     def get_device_alarms(self) -> Dict[str, Any]:
         """Combine the list of active alarms from all garmin devices."""
 
