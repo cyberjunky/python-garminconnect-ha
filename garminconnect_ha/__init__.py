@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Any, Dict
 
+import cloudscraper
 import requests
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,11 @@ logger = logging.getLogger(__name__)
 URL_BASE = "https://connect.garmin.com/modern/"
 URL_BASE_PROXY = "https://connect.garmin.com/proxy/"
 URL_LOGIN = "https://sso.garmin.com/sso/login"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64;"
+    " rv:48.0) Gecko/20100101 Firefox/50.0"
+}
+
 
 def _check_response(resp: requests.Response) -> None:
     """Check the response and throw the appropriate exception if needed."""
@@ -34,17 +40,18 @@ def _check_response(resp: requests.Response) -> None:
 
         raise ApiException(f"Unknown API response [{resp.status_code}] - {error}")
 
+
 class Garmin:
     """Garmin Connect's API wrapper."""
 
     def __init__(self, email: str, password: str):
         """Garmin Connect's API wrapper."""
-        self._session = None
+        self._session = cloudscraper.CloudScraper()
+        self._session.headers.update(HEADERS)
         self._email = email
         self._password = password
         self._username = None
         self._display_name = None
-
 
     def _get_data(
         self, url: str, headers: dict = None, params: dict = None, data: dict = None
@@ -85,24 +92,11 @@ class Garmin:
 
         logger.debug("Login started")
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64;"
-            " rv:48.0) Gecko/20100101 Firefox/50.0"
-        }
-
-        # Define a valid user agent
-        self._session = requests.Session()
-        self._session.headers.update(headers)
-
         url = URL_BASE + "auth/hostname"
         logger.debug("Requesting sso hostname with url: %s", url)
 
         # Request sso hostname
-        sso_hostname = (
-            self._get_data(url, headers=headers)
-            .json()
-            .get("host")
-        )
+        sso_hostname = self._get_data(url).json().get("host")
 
         logger.debug("Requesting login token with url: %s", URL_LOGIN)
 
@@ -146,7 +140,7 @@ class Garmin:
             ("rememberMyBrowserChecked", "false"),
         ]
 
-        response = self._get_data(URL_LOGIN, headers=headers, params=params)
+        response = self._get_data(URL_LOGIN, params=params)
 
         # Lookup for csrf token
         csrf = re.search(
@@ -185,9 +179,7 @@ class Garmin:
         }
 
         logger.debug("Login using ticket")
-        response = self._get_data(
-            URL_LOGIN, headers=headers, params=params, data=data
-        )
+        response = self._get_data(URL_LOGIN, headers=headers, params=params, data=data)
 
         # Check we have sso guid in cookies
         if "GARMIN-SSO-GUID" not in self._session.cookies:
@@ -205,9 +197,7 @@ class Garmin:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError(
-                    "Too many requests"
-                ) from err
+                raise GarminConnectTooManyRequestsError("Too many requests") from err
 
             if not response.history:
                 GarminConnectAuthenticationError("Authentication error")
