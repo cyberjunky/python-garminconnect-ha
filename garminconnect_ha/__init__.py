@@ -15,6 +15,31 @@ URL_SSO = "https://sso.garmin.com/sso"
 URL_SIGNIN = "https://sso.garmin.com/sso/signin"
 
 
+def check_response(resp: requests.Response) -> None:
+    """Check the response and throw the appropriate exception if needed."""
+
+    logger.debug("Response status code: %s", resp.status_code)
+    logger.debug("Response: %s", resp.text)
+
+    if resp.status_code != 200:
+        try:
+            response = resp.json()
+            error = response["message"]
+        except Exception:
+            error = None
+
+        if resp.status_code == 401:
+            raise GarminConnectAuthenticationError("Authentication error")
+
+        if resp.status_code == 403:
+            raise GarminConnectConnectionError("Connection error")
+
+        if resp.status_code == 429:
+            raise GarminConnectTooManyRequestsError("Too many requests")
+
+        raise ApiException(f"Unknown API response [{resp.status_code}] - {error}")
+
+
 def parse_json(html, key):
     """Find and return JSON data."""
     found = re.search(key + r" = JSON.parse\(\"(.*)\"\);", html, re.M)
@@ -74,39 +99,28 @@ class Garmin:
             "displayNameRequired": "false",
         }
 
-        logger.debug("Login to Garmin Connect using POST url %s", URL_SIGNIN)
-        try:
-            response = self._cf_req.get(
-                URL_SIGNIN, headers=self._headers, params=params
-            )
+        logger.debug("Login to Garmin Connect with GET URL: %s", URL_SIGNIN)
+        response = self._cf_req.get(URL_SIGNIN, headers=self._headers, params=params)
+        check_response(response)
 
-            response = self._cf_req.post(
-                URL_SIGNIN, headers=self._headers, params=params, data=data
-            )
-            if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests")
-            response.raise_for_status()
-            self._req.cookies = self._cf_req.cookies
-            logger.debug("Login response code %s", response.status_code)
-        except requests.exceptions.HTTPError as err:
-            raise GarminConnectConnectionError("Error connecting") from err
+        logger.debug("Login to Garmin Connect with POST URL: %s", URL_SIGNIN)
+        response = self._cf_req.post(
+            URL_SIGNIN, headers=self._headers, params=params, data=data
+        )
+        check_response(response)
 
-        logger.debug("Response is %s", response.text)
+        self._req.cookies = self._cf_req.cookies
+
         response_url = re.search(r'"(https:[^"]+?ticket=[^"]+)"', response.text)
 
         if not response_url:
             raise GarminConnectAuthenticationError("Authentication error")
 
         response_url = re.sub(r"\\", "", response_url.group(1))
-        logger.debug("Fetching profile info using found response url")
-        try:
-            response = self._req.get(response_url)
-            if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests")
 
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as err:
-            raise GarminConnectConnectionError("Error connecting") from err
+        logger.debug("Fetching profile info using found response URL: %s", response_url)
+        response = self._req.get(response_url)
+        check_response(response)
 
         social_profile = parse_json(response.text, "VIEWER_SOCIAL_PROFILE")
 
@@ -121,34 +135,8 @@ class Garmin:
 
     def _get_data(self, url):
         """Fetch and return API data."""
-        try:
-            response = self._req.get(url, headers=self._headers)
-            if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError("Too many requests")
-
-            logger.debug("Fetch response code %s", response.status_code)
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as err:
-            logger.debug(
-                "Exception occurred during data retrieval - perhaps session expired - trying relogin: %s",
-                err,
-            )
-            self.login()
-            try:
-                response = self._req.get(url, headers=self._headers)
-                if response.status_code == 429:
-                    raise GarminConnectTooManyRequestsError(
-                        "Too many requests"
-                    ) from err
-
-                logger.debug("Fetch response code %s", response.status_code)
-                response.raise_for_status()
-            except requests.exceptions.HTTPError as err:
-                logger.debug(
-                    "Exception occurred during data retrieval, relogin without effect: %s",
-                    err,
-                )
-                raise GarminConnectConnectionError("Error connecting") from err
+        response = self._req.get(url, headers=self._headers)
+        check_response(response)
 
         return response
 
@@ -156,7 +144,7 @@ class Garmin:
         """Return available devices for the current user account."""
 
         url = URL_BASE_PROXY + "device-service/deviceregistration/devices"
-        logger.debug("Requesting devices with url: %s", url)
+        logger.debug("Requesting devices with URL: %s", url)
 
         return self._get_data(url).json()
 
@@ -168,7 +156,7 @@ class Garmin:
             + "device-service/deviceservice/device-info/settings/"
             + str(device_id)
         )
-        logger.debug("Requesting device settings with url: %s", url)
+        logger.debug("Requesting device settings with URL: %s", url)
 
         return self._get_data(url).json()
 
@@ -184,14 +172,13 @@ class Garmin:
             + cdate
         )
 
-        logger.debug("Requesting user summary with url: %s", url)
+        logger.debug("Requesting user summary with URL: %s", url)
         response = self._get_data(url).json()
 
         if response["privacyProtected"] is True:
-            logger.debug("Session expired - trying relogin")
-            self.login()
+            raise GarminConnectAuthenticationError("Authentication error")
 
-        return self._get_data(url).json()
+        return response
 
     def get_body_composition(self, cdate: str) -> Dict[str, Any]:
         """Return available body composition data for 'cDate' format 'YYYY-mm-dd'."""
@@ -203,7 +190,7 @@ class Garmin:
             + "&endDate="
             + cdate
         )
-        logger.debug("Requesting body composition with url: %s", url)
+        logger.debug("Requesting body composition with URL: %s", url)
 
         return self._get_data(url).json()
 
