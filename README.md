@@ -65,6 +65,9 @@ try:
     # Get alarm data from all devices
     logger.debug(client.get_device_alarms())
 
+    # Get users max metrics data for 'YYYY-MM-DD'
+    logger.debug(client.get_max_metrics(today.isoformat()))
+
 except (
         GarminConnectConnectionError,
         GarminConnectAuthenticationError,
