@@ -22,5 +22,5 @@ setup(
     long_description=readme,
     url="https://github.com/cyberjunky/python-garminconnect-ha",
     packages=["garminconnect_ha"],
-    version="0.1.9",
+    version="0.1.10",
 )
