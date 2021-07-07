@@ -44,7 +44,6 @@ try:
     username = client.login()
     logger.debug("Username = %s", username)
 
-
     # Get users activity summary data for 'YYYY-MM-DD'
     logger.debug(client.get_user_summary(today.isoformat()))
 

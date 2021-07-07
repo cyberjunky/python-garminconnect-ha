@@ -196,11 +196,7 @@ class Garmin:
 
     def get_max_metrics(self, cdate: str) -> Dict[str, Any]:
         """Return available max metric data for 'cDate' format 'YYYY-mm-dd'."""
-        url = (
-            URL_BASE_PROXY
-            + "metrics-service/metrics/maxmet/latest/"
-            + cdate
-        )
+        url = URL_BASE_PROXY + "metrics-service/metrics/maxmet/latest/" + cdate
         logger.debug("Requesting max metrics with url: %s", url)
 
         return self._get_data(url).json()
