@@ -35,37 +35,43 @@ logger = logging.getLogger(__name__)
 today = date.today()
 
 try:
-    # Initialize Garmin Connect client with your credentials
-    client = Garmin(YOUR_EMAIL, YOUR_PASSWORD)
+    # Initialize Garmin Connect with your credentials
+    api = Garmin(YOUR_EMAIL, YOUR_PASSWORD)
 
     ## User
 
     # Login to Garmin Connect portal
-    username = client.login()
+    username = api.login()
     logger.debug("Username = %s", username)
 
-    # Get users activity summary data for 'YYYY-MM-DD'
-    logger.debug(client.get_user_summary(today.isoformat()))
+    # Get activity summary data for 'YYYY-MM-DD'
+    logger.debug(api.get_user_summary(today.isoformat()))
 
-    # Get users body composition data for 'YYYY-MM-DD'
-    logger.debug(client.get_body_composition(today.isoformat()))
+    # Get body composition data for 'YYYY-MM-DD'
+    logger.debug(api.get_body_composition(today.isoformat()))
 
-    # Get users max metrics data for 'YYYY-MM-DD'
-    logger.debug(client.get_max_metrics(today.isoformat()))
+    # Get max metrics data for 'YYYY-MM-DD'
+    logger.debug(api.get_max_metrics(today.isoformat()))
+
+    # Get hydration data for 'YYYY-MM-DD'
+    logger.debug(api.get_hydration(today.isoformat()))
+
+    # Get personal records for current user
+    logger.debug(api.get_personal_records())
 
     ## Devices
 
     # Get users devices data
-    devices = client.get_devices()
+    devices = api.get_devices()
     logger.debug(devices)
 
     # Get details of users device with deviceId
     for device in devices:
         device_id = device["deviceId"]
-        logger.debug(client.get_device_settings(device_id))
+        logger.debug(api.get_device_settings(device_id))
 
     # Get alarm data from all devices
-    logger.debug(client.get_device_alarms())
+    logger.debug(api.get_device_alarms())
 
 except (
         GarminConnectConnectionError,

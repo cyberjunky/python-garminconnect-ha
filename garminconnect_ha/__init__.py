@@ -149,7 +149,7 @@ class Garmin:
         return self._get_data(url).json()
 
     def get_device_settings(self, device_id: str) -> Dict[str, Any]:
-        """Return device settings for specific device."""
+        """Return device settings for device with 'device_id'."""
 
         url = (
             URL_BASE_PROXY
@@ -161,7 +161,7 @@ class Garmin:
         return self._get_data(url).json()
 
     def get_user_summary(self, cdate: str) -> Dict[str, Any]:
-        """Return user activity summary for 'cDate' format 'YYYY-mm-dd'."""
+        """Return user activity summary for 'cdate' format 'YYYY-mm-dd'."""
 
         url = (
             URL_BASE_PROXY
@@ -181,7 +181,7 @@ class Garmin:
         return response
 
     def get_body_composition(self, cdate: str) -> Dict[str, Any]:
-        """Return available body composition data for 'cDate' format 'YYYY-mm-dd'."""
+        """Return available body composition data for 'cdate' format 'YYYY-mm-dd'."""
         url = (
             URL_BASE_PROXY
             + "weight-service/weight/daterangesnapshot"
@@ -195,16 +195,36 @@ class Garmin:
         return self._get_data(url).json()
 
     def get_max_metrics(self, cdate: str) -> Dict[str, Any]:
-        """Return available max metric data for 'cDate' format 'YYYY-mm-dd'."""
+        """Return available max metric data for 'cdate' format 'YYYY-mm-dd'."""
         url = URL_BASE_PROXY + "metrics-service/metrics/maxmet/latest/" + cdate
-        logger.debug("Requesting max metrics with url: %s", url)
+        logger.debug("Requestng max metrics with URL: %s", url)
+
+        return self._get_data(url).json()
+
+    def get_hydration(self, cdate: str) -> Dict[str, Any]:
+        """Return available hydration data 'cdate' format 'YYYY-mm-dd'."""
+        url = (
+            URL_BASE_PROXY + "usersummary-service/usersummary/hydration/daily/" + cdate
+        )
+        logger.debug("Requesting hydration data with URL: %s", url)
+
+        return self._get_data(url).json()
+
+    def get_personal_records(self) -> Dict[str, Any]:
+        """Return personal records for current user."""
+        url = (
+            URL_BASE_PROXY
+            + "personalrecord-service/personalrecord/prs/"
+            + self._display_name
+        )
+        logger.debug("Requesting personal records for user")
 
         return self._get_data(url).json()
 
     def get_device_alarms(self) -> Dict[str, Any]:
         """Combine the list of active alarms from all garmin devices."""
 
-        logger.debug("Gathering device alarms")
+        logger.debug("Requesting device alarms")
 
         alarms = []
         devices = self.get_devices()
