@@ -1,179 +1,205 @@
-"""Garmin Connect Python 3 API wrapper for Home Assistant."""
+# -*- coding: utf-8 -*-
+"""Python 3 API wrapper for Garmin Connect to get your statistics."""
 import json
 import logging
 import re
 from typing import Any, Dict
 
 import cloudscraper
-import requests
 
-logger = logging.getLogger(__name__)
-
-URL_BASE = "https://connect.garmin.com"
-URL_BASE_PROXY = "https://connect.garmin.com/proxy/"
-URL_SSO = "https://sso.garmin.com/sso"
-URL_SIGNIN = "https://sso.garmin.com/sso/signin"
+logger = logging.getLogger(__file__)
 
 
-def check_response(resp: requests.Response) -> None:
-    """Check the response and throw the appropriate exception if needed."""
+class ApiClient:
+    """Class for a single API endpoint."""
 
-    logger.debug("Response status code: %s", resp.status_code)
-    logger.debug("Response: %s", resp.text)
+    def __init__(
+        self,
+        session,
+        baseurl,
+        headers=None,
+        aditional_headers=None,
+    ):
+        """Return a new Client instance."""
+        self.session = session
+        self.baseurl = baseurl
+        if headers:
+            self.headers = headers
+        else:
+            self.headers = {}
+        self.headers.update(aditional_headers)
 
-    if resp.status_code != 200:
+    def url(self, addurl=None):
+        """Return the url for the API endpoint."""
+
+        path = f"https://{self.baseurl}"
+        if addurl is not None:
+            path += f"/{addurl}"
+
+        return path
+
+    def get(self, addurl, aditional_headers=None, params=None):
+        """Make an API call using the GET method."""
+        total_headers = self.headers.copy()
+        if aditional_headers:
+            total_headers.update(aditional_headers)
+        url = self.url(addurl)
         try:
-            response = resp.json()
-            error = response["message"]
-        except Exception:
-            error = None
+            response = self.session.get(url, headers=total_headers, params=params)
+            response.raise_for_status()
+            return response
+        except Exception as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError from err
 
-        if resp.status_code == 401:
-            raise GarminConnectAuthenticationError("Authentication error")
+            raise GarminConnectConnectionError from err
 
-        if resp.status_code == 403:
-            raise GarminConnectConnectionError("Connection error")
+    def post(self, addurl, aditional_headers, params, data):
+        """Make an API call using the POST method."""
+        total_headers = self.headers.copy()
+        if aditional_headers:
+            total_headers.update(aditional_headers)
+        url = self.url(addurl)
+        try:
+            response = self.session.post(
+                url, headers=total_headers, params=params, data=data
+            )
+            response.raise_for_status()
+            return response
+        except Exception as err:
+            if response.status_code == 429:
+                raise GarminConnectTooManyRequestsError from err
 
-        if resp.status_code == 429:
-            raise GarminConnectTooManyRequestsError("Too many requests")
-
-        raise ApiException(f"Unknown API response [{resp.status_code}] - {error}")
-
-
-def parse_json(html, key):
-    """Find and return JSON data."""
-    found = re.search(key + r" = JSON.parse\(\"(.*)\"\);", html, re.M)
-    if found:
-        text = found.group(1).replace('\\"', '"')
-        return json.loads(text)
-    return None
+            raise GarminConnectConnectionError from err
 
 
 class Garmin:
-    """Garmin Connect main class."""
+    """Class for fetching data from Garmin Connect."""
+
+    garmin_connect_base_url = "https://connect.garmin.com"
+    garmin_connect_login_url = garmin_connect_base_url + "/en-US/signin"
+    garmin_connect_css_url = "https://static.garmincdn.com/com.garmin.connect/ui/css/gauth-custom-v1.2-min.css"
+    garmin_connect_sso_login = "signin"
+    garmin_connect_devices_url = "proxy/device-service/deviceregistration/devices"
+    garmin_connect_device_url = (
+        "proxy/device-service/deviceservice/device-info/settings"
+    )
+    garmin_connect_weight_url = "proxy/weight-service/weight/dateRange"
+    garmin_connect_daily_summary_url = "proxy/usersummary-service/usersummary/daily"
+
+    garmin_headers = {"NK": "NT"}
 
     def __init__(self, email, password):
-        """Init Garmin class."""
-        self._email = email
-        self._password = password
+        """Create a new class instance."""
+        self.username = email
+        self.password = password
+        self.session = cloudscraper.CloudScraper()
+        self.sso_rest_client = ApiClient(
+            self.session, "sso.garmin.com/sso", aditional_headers=self.garmin_headers
+        )
+        self.modern_rest_client = ApiClient(
+            self.session,
+            "connect.garmin.com/modern",
+            aditional_headers=self.garmin_headers,
+        )
 
-        self._cf_req = cloudscraper.CloudScraper()
-        self._req = requests.session()
-        self._headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-            "origin": "https://sso.garmin.com",
-        }
-        self._display_name = None
+        self.display_name = None
+
+    @staticmethod
+    def __get_json(page_html, key):
+        found = re.search(key + r" = (\{.*\});", page_html, re.M)
+        if found:
+            json_text = found.group(1).replace('\\"', '"')
+            return json.loads(json_text)
+
+        return None
 
     def login(self):
-        """Login to portal using user credentials."""
+        """Login to Garmin Connect."""
+
+        logger.debug("login: %s %s", self.username, self.password)
+        get_headers = {"Referer": self.garmin_connect_login_url}
         params = {
-            "webhost": URL_BASE,
-            "service": URL_BASE,
-            "source": URL_SIGNIN,
-            "redirectAfterAccountLoginUrl": URL_BASE,
-            "redirectAfterAccountCreationUrl": URL_BASE,
-            "gauthHost": URL_SSO,
+            "service": self.modern_rest_client.url(),
+            "webhost": self.garmin_connect_base_url,
+            "source": self.garmin_connect_login_url,
+            "redirectAfterAccountLoginUrl": self.modern_rest_client.url(),
+            "redirectAfterAccountCreationUrl": self.modern_rest_client.url(),
+            "gauthHost": self.sso_rest_client.url(),
             "locale": "en_US",
             "id": "gauth-widget",
-            "cssUrl": "https://static.garmincdn.com/com.garmin.connect/ui/css/gauth-custom-v1.2-min.css",
+            "cssUrl": self.garmin_connect_css_url,
+            "privacyStatementUrl": "//connect.garmin.com/en-US/privacy/",
             "clientId": "GarminConnect",
             "rememberMeShown": "true",
             "rememberMeChecked": "false",
             "createAccountShown": "true",
             "openCreateAccount": "false",
-            "usernameShown": "false",
             "displayNameShown": "false",
             "consumeServiceTicket": "false",
             "initialFocus": "true",
             "embedWidget": "false",
-            "generateExtraServiceTicket": "false",
+            "generateExtraServiceTicket": "true",
+            "generateTwoExtraServiceTickets": "false",
+            "generateNoServiceTicket": "false",
+            "globalOptInShown": "true",
+            "globalOptInChecked": "false",
+            "mobile": "false",
+            "connectLegalTerms": "true",
+            "locationPromptShown": "true",
+            "showPassword": "true",
         }
+
+        response = self.sso_rest_client.get(
+            self.garmin_connect_sso_login, get_headers, params
+        )
+
+        found = re.search(r"name=\"_csrf\" value=\"(\w*)", response.text, re.M)
+        if not found:
+            logger.error("_csrf not found: %s", response.status_code)
+            return False
+        logger.debug("_csrf found (%s).", found.group(1))
 
         data = {
-            "username": self._email,
-            "password": self._password,
-            "embed": "true",
-            "lt": "e1s1",
-            "_eventId": "submit",
-            "displayNameRequired": "false",
+            "username": self.username,
+            "password": self.password,
+            "embed": "false",
+            "_csrf": found.group(1),
+        }
+        post_headers = {
+            "Referer": response.url,
+            "Content-Type": "application/x-www-form-urlencoded",
         }
 
-        logger.debug("Login to Garmin Connect with GET URL: %s", URL_SIGNIN)
-        response = self._cf_req.get(URL_SIGNIN, headers=self._headers, params=params)
-        check_response(response)
-
-        logger.debug("Login to Garmin Connect with POST URL: %s", URL_SIGNIN)
-        response = self._cf_req.post(
-            URL_SIGNIN, headers=self._headers, params=params, data=data
+        response = self.sso_rest_client.post(
+            self.garmin_connect_sso_login, post_headers, params, data
         )
-        check_response(response)
 
-        self._req.cookies = self._cf_req.cookies
+        found = re.search(r"\?ticket=([\w-]*)", response.text, re.M)
+        if not found:
+            logger.error("Login ticket not found (%d).", response.status_code)
+            return False
+        params = {"ticket": found.group(1)}
 
-        response_url = re.search(r'"(https:[^"]+?ticket=[^"]+)"', response.text)
+        response = self.modern_rest_client.get("", params=params)
 
-        if not response_url:
-            raise GarminConnectAuthenticationError("Authentication error")
+        user_prefs = self.__get_json(response.text, "VIEWER_USERPREFERENCES")
+        self.display_name = user_prefs["displayName"]
 
-        response_url = re.sub(r"\\", "", response_url.group(1))
+        logger.debug("Display name is %s", self.display_name)
 
-        logger.debug("Fetching profile info using found response URL: %s", response_url)
-        response = self._req.get(response_url)
-        check_response(response)
-
-        social_profile = parse_json(response.text, "VIEWER_SOCIAL_PROFILE")
-
-        logger.debug("Social Profile: %s", social_profile)
-        self._display_name = social_profile["displayName"]
-        user_name = social_profile["userName"]
-
-        logger.debug("Display name: %s", self._display_name)
-        logger.debug("Username: %s", user_name)
-
-        return user_name
-
-    def _get_data(self, url):
-        """Fetch and return API data."""
-        response = self._req.get(url, headers=self._headers)
-        check_response(response)
-
-        return response
-
-    def get_devices(self) -> Dict[str, Any]:
-        """Return available devices for the current user account."""
-
-        url = URL_BASE_PROXY + "device-service/deviceregistration/devices"
-        logger.debug("Requesting devices with URL: %s", url)
-
-        return self._get_data(url).json()
-
-    def get_device_settings(self, device_id: str) -> Dict[str, Any]:
-        """Return device settings for device with 'device_id'."""
-
-        url = (
-            URL_BASE_PROXY
-            + "device-service/deviceservice/device-info/settings/"
-            + str(device_id)
-        )
-        logger.debug("Requesting device settings with URL: %s", url)
-
-        return self._get_data(url).json()
+        return True
 
     def get_user_summary(self, cdate: str) -> Dict[str, Any]:
         """Return user activity summary for 'cdate' format 'YYYY-mm-dd'."""
 
-        url = (
-            URL_BASE_PROXY
-            + "usersummary-service/usersummary/daily/"
-            + self._display_name
-            + "?"
-            + "calendarDate="
-            + cdate
-        )
-
+        url = f"{self.garmin_connect_daily_summary_url}/{self.display_name}"
+        params = {
+            "calendarDate": str(cdate),
+        }
         logger.debug("Requesting user summary with URL: %s", url)
-        response = self._get_data(url).json()
+
+        response = self.modern_rest_client.get(url, params=params).json()
 
         if response["privacyProtected"] is True:
             raise GarminConnectAuthenticationError("Authentication error")
@@ -182,47 +208,31 @@ class Garmin:
 
     def get_body_composition(self, cdate: str) -> Dict[str, Any]:
         """Return available body composition data for 'cdate' format 'YYYY-mm-dd'."""
-        url = (
-            URL_BASE_PROXY
-            + "weight-service/weight/daterangesnapshot"
-            + "?startDate="
-            + cdate
-            + "&endDate="
-            + cdate
-        )
+
+        url = self.garmin_connect_weight_url
+        params = {"startDate": str(cdate), "endDate": str(cdate)}
         logger.debug("Requesting body composition with URL: %s", url)
 
-        return self._get_data(url).json()
+        return self.modern_rest_client.get(url, params=params).json()
 
-    def get_max_metrics(self, cdate: str) -> Dict[str, Any]:
-        """Return available max metric data for 'cdate' format 'YYYY-mm-dd'."""
-        url = URL_BASE_PROXY + "metrics-service/metrics/maxmet/latest/" + cdate
-        logger.debug("Requestng max metrics with URL: %s", url)
+    def get_devices(self) -> Dict[str, Any]:
+        """Return available devices for the current user account."""
 
-        return self._get_data(url).json()
+        url = self.garmin_connect_devices_url
+        logger.debug("Requesting devices with URL: %s", url)
 
-    def get_hydration(self, cdate: str) -> Dict[str, Any]:
-        """Return available hydration data 'cdate' format 'YYYY-mm-dd'."""
-        url = (
-            URL_BASE_PROXY + "usersummary-service/usersummary/hydration/daily/" + cdate
-        )
-        logger.debug("Requesting hydration data with URL: %s", url)
+        return self.modern_rest_client.get(url).json()
 
-        return self._get_data(url).json()
+    def get_device_settings(self, device_id: str) -> Dict[str, Any]:
+        """Return device settings for device with 'device_id'."""
 
-    def get_personal_records(self) -> Dict[str, Any]:
-        """Return personal records for current user."""
-        url = (
-            URL_BASE_PROXY
-            + "personalrecord-service/personalrecord/prs/"
-            + self._display_name
-        )
-        logger.debug("Requesting personal records for user")
+        url = f"{self.garmin_connect_device_url}/{device_id}"
+        logger.debug("Requesting device settings with URL: %s", url)
 
-        return self._get_data(url).json()
+        return self.modern_rest_client.get(url).json()
 
     def get_device_alarms(self) -> Dict[str, Any]:
-        """Combine the list of active alarms from all garmin devices."""
+        """Get list of active alarms from all devices."""
 
         logger.debug("Requesting device alarms")
 
@@ -232,17 +242,6 @@ class Garmin:
             device_settings = self.get_device_settings(device["deviceId"])
             alarms += device_settings["alarms"]
         return alarms
-
-
-class ApiException(Exception):
-    """Exception for API calls."""
-
-    def __init__(self, msg):
-        super().__init__()
-        self.msg = msg
-
-    def __str__(self):
-        return f"API Error: {self.msg}"
 
 
 class GarminConnectConnectionError(Exception):

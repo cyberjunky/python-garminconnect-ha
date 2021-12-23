@@ -50,15 +50,6 @@ try:
     # Get body composition data for 'YYYY-MM-DD'
     logger.debug(api.get_body_composition(today.isoformat()))
 
-    # Get max metrics data for 'YYYY-MM-DD'
-    logger.debug(api.get_max_metrics(today.isoformat()))
-
-    # Get hydration data for 'YYYY-MM-DD'
-    logger.debug(api.get_hydration(today.isoformat()))
-
-    # Get personal records for current user
-    logger.debug(api.get_personal_records())
-
     ## Devices
 
     # Get users devices data
