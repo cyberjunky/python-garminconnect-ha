@@ -13,6 +13,10 @@ logger = logging.getLogger(__file__)
 class ApiClient:
     """Class for a single API endpoint."""
 
+    default_headers = {
+        'User-Agent'    : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:66.0) Gecko/20100101 Firefox/66.0'
+    }
+
     def __init__(
         self,
         session,
@@ -26,7 +30,7 @@ class ApiClient:
         if headers:
             self.headers = headers
         else:
-            self.headers = {}
+            self.headers = self.default_headers.copy()
         self.headers.update(aditional_headers)
 
     def url(self, addurl=None):
@@ -50,9 +54,24 @@ class ApiClient:
             return response
         except Exception as err:
             if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError from err
+                raise GarminConnectTooManyRequestsError("Too many requests") from err
+            if response.status_code == 401:
+                raise GarminConnectAuthenticationError("Authentication error") from err
+            if response.status_code == 403:
+                raise GarminConnectConnectionError("Forbidden url") from err
+            if response.status_code == 500:
+                raise GarminConnectConnectionError("Server error") from err
+            if response.status_code == 404:
+                raise GarminConnectConnectionError("Not found") from err
+            try:
+                resp = response.json()
+                error = resp["message"].json()
+            except AttributeError:
+                error = "Unknown"
 
-            raise GarminConnectConnectionError from err
+            raise GarminConnectConnectionError(
+                f"Unknown error {response.status_code} - {error}"
+            ) from err
 
     def post(self, addurl, aditional_headers, params, data):
         """Make an API call using the POST method."""
@@ -68,9 +87,24 @@ class ApiClient:
             return response
         except Exception as err:
             if response.status_code == 429:
-                raise GarminConnectTooManyRequestsError from err
+                raise GarminConnectTooManyRequestsError("Too many requests") from err
+            if response.status_code == 401:
+                raise GarminConnectAuthenticationError("Authentication error") from err
+            if response.status_code == 403:
+                raise GarminConnectConnectionError("Forbidden url") from err
+            if response.status_code == 500:
+                raise GarminConnectConnectionError("Server error") from err
+            if response.status_code == 404:
+                raise GarminConnectConnectionError("Not found") from err
+            try:
+                resp = response.json()
+                error = resp["message"].json()
+            except AttributeError:
+                error = "Unknown"
 
-            raise GarminConnectConnectionError from err
+            raise GarminConnectConnectionError(
+                f"Unknown error {response.status_code} - {error}"
+            ) from err
 
 
 class Garmin:
@@ -86,6 +120,15 @@ class Garmin:
     )
     garmin_connect_weight_url = "proxy/weight-service/weight/dateRange"
     garmin_connect_daily_summary_url = "proxy/usersummary-service/usersummary/daily"
+    garmin_connect_metrics_url = "proxy/metrics-service/metrics/maxmet/latest"
+    garmin_connect_daily_hydration_url = (
+        "proxy/usersummary-service/usersummary/hydration/daily"
+    )
+    garmin_connect_personal_record_url = (
+        "proxy/personalrecord-service/personalrecord/prs"
+    )
+    garmin_connect_sleep_daily_url = "proxy/wellness-service/wellness/dailySleepData"
+    garmin_connect_rhr = "proxy/userstats-service/wellness/daily"
 
     garmin_headers = {"NK": "NT"}
 
@@ -212,6 +255,47 @@ class Garmin:
         url = self.garmin_connect_weight_url
         params = {"startDate": str(cdate), "endDate": str(cdate)}
         logger.debug("Requesting body composition with URL: %s", url)
+
+        return self.modern_rest_client.get(url, params=params).json()
+
+    def get_max_metrics(self, cdate: str) -> Dict[str, Any]:
+        """Return available max metric data for 'cdate' format 'YYYY-mm-dd'."""
+
+        url = f"{self.garmin_connect_metrics_url}/{cdate}"
+        logger.debug("Requestng max metrics with URL: %s", url)
+
+        return self.modern_rest_client.get(url).json()
+
+    def get_hydration(self, cdate: str) -> Dict[str, Any]:
+        """Return available hydration data 'cdate' format 'YYYY-mm-dd'."""
+
+        url = f"{self.garmin_connect_daily_hydration_url}/{cdate}"
+        logger.debug("Requesting hydration data with URL: %s", url)
+
+        return self.modern_rest_client.get(url).json()
+
+    def get_personal_records(self) -> Dict[str, Any]:
+        """Return personal records for current user."""
+
+        url = f"{self.garmin_connect_personal_record_url}/{self.display_name}"
+        logger.debug("Requesting personal records for user with URL: %s", url)
+
+        return self.modern_rest_client.get(url).json()
+
+    def get_sleep_day(self, cdate: str) -> Dict[str, Any]:
+        """Return sleep data for current user."""
+
+        params = {"date": str(cdate), "nonSleepBufferMinutes": 60}
+
+        url = f"{self.garmin_connect_sleep_daily_url}/{self.display_name}"
+
+        return self.modern_rest_client.get(url, params=params).json()
+
+    def get_rhr_day(self, cdate: str) -> Dict[str, Any]:
+        """Return resting heartrate data for current user."""
+
+        params = {"fromDate": str(cdate), "untilDate": str(cdate), "metricId": 60}
+        url = f"{self.garmin_connect_rhr}/{self.display_name}"
 
         return self.modern_rest_client.get(url, params=params).json()
 
