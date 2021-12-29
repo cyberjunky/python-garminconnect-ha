@@ -1,5 +1,8 @@
 # Python: Garmin Connect for Home Assistant
 
+
+# NOTE: Replaced by https://github.com/cyberjunky/python-garminconnect/ v0.1.24 (compatible) so I only have to maintain one code base.
+
 Minimal Garmin Connect Python 3 API wrapper for Home Assistant
 
 ## About
